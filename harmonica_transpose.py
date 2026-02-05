@@ -103,9 +103,10 @@ def normalize_brackets(text: str) -> str:
     return text
 
 
-def transpose_sheet(text: str, target_key: str, source_key: str = 'C') -> str:
+def transpose_sheet(text: str, target_key: str, source_key: str = 'C') -> tuple[str, list[str]]:
     """
     转调整个谱子
+    返回: (转调后的谱子，警告列表)
     """
     # 统一替换为英文括号
     text = normalize_brackets(text)
@@ -116,7 +117,11 @@ def transpose_sheet(text: str, target_key: str, source_key: str = 'C') -> str:
     semitone_shift = source_semitones - target_semitones
     
     result = []
+    warnings = []
     i = 0
+    
+    # 定义可接受的非音符字符
+    acceptable_chars = set(' \t\n\r0890=-|/\\:;,.!?=_')
     
     while i < len(text):
         char = text[i]
@@ -133,7 +138,8 @@ def transpose_sheet(text: str, target_key: str, source_key: str = 'C') -> str:
             if j < len(text):
                 # 递归处理括号内的内容
                 inner_text = ''.join(inner_content)
-                transposed_inner = transpose_sheet(inner_text, target_key, source_key)
+                transposed_inner, inner_warnings = transpose_sheet(inner_text, target_key, source_key)
+                warnings.extend(inner_warnings)
                 result.append('(')
                 result.append(transposed_inner)
                 result.append(')')
@@ -154,7 +160,8 @@ def transpose_sheet(text: str, target_key: str, source_key: str = 'C') -> str:
             
             if j < len(text):
                 inner_text = ''.join(inner_content)
-                transposed_inner = transpose_sheet(inner_text, target_key, source_key)
+                transposed_inner, inner_warnings = transpose_sheet(inner_text, target_key, source_key)
+                warnings.extend(inner_warnings)
                 result.append('[')
                 result.append(transposed_inner)
                 result.append(']')
@@ -192,19 +199,26 @@ def transpose_sheet(text: str, target_key: str, source_key: str = 'C') -> str:
             i += 1
             continue
         
-        # 其他字符原样保留（空格、换行、0、8、9 等）
-        result.append(char)
+        # 其他字符
+        if char in acceptable_chars:
+            result.append(char)
+        else:
+            # 未知字符，发出警告但仍保留
+            if char not in [c for c, _ in warnings]:
+                warnings.append((char, i))
+            result.append(char)
         i += 1
     
-    return ''.join(result)
+    return ''.join(result), warnings
 
 
 def main():
     parser = argparse.ArgumentParser(description="口琴谱调号转换程序")
-    parser.add_argument("--input", "-i", help="输入文件路径")
-    parser.add_argument("--output", "-o", help="输出文件路径")
-    parser.add_argument("--target", help="目标调号 (例如: D, G, C#)")
+    parser.add_argument("--input", "-i", help="输入文件路径", default="input")
+    parser.add_argument("--output", "-o", help="输出文件路径", default="output")
+    parser.add_argument("--target", help="目标调号 (例如: D, G, C#)", default="D")
     parser.add_argument("--source", "-s", default="C", help="源调号 (默认: C)")
+    parser.add_argument("--warnings", "-w", help="警告信息输出文件路径", default="warnings")
     
     args = parser.parse_args()
     
@@ -229,7 +243,29 @@ def main():
         sheet_content = input_arg
     
     # 转调
-    result = transpose_sheet(sheet_content, target_key, source_key)
+    result, warnings = transpose_sheet(sheet_content, target_key, source_key)
+    
+    # 构建警告文本
+    warning_text = ""
+    if warnings:
+        warning_lines = ["警告: 以下字符无法识别为音符，已原样保留:"]
+        unique_chars = sorted(set(c for c, _ in warnings))
+        for char in unique_chars:
+            warning_lines.append(f"  '{char}' (Unicode: U+{ord(char):04X})")
+        warning_text = "\n".join(warning_lines) + "\n"
+
+    # 输出警告
+    if warning_text:
+        if args.warnings:
+            try:
+                with open(args.warnings, 'w', encoding='utf-8') as f:
+                    f.write(warning_text)
+                print(f"警告信息已成功保存到: {args.warnings}")
+            except Exception as e:
+                print(f"错误: 无法写入警告文件 {args.warnings}: {e}")
+                print(warning_text)
+        else:
+            print(warning_text)
     
     header = f"=== 从 {source_key.upper()} 调转换到 {target_key.upper()} 调 ===\n"
     output_text = header + result
